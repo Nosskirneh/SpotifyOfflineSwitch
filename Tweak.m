@@ -1,67 +1,100 @@
-#import "Header.h"
+#import "include/Header.h"
 
+SPCore *core;
+SPSession *session;
+SettingsViewController *offlineViewController;
+BOOL isCurrentViewOfflineView;
 
-static SPCore *core;
-static BOOL isCurrentViewOfflineView;
+// What should happen on triggered flipswitch event?
+void doEnableOfflineMode(CFNotificationCenterRef center,
+                     void *observer,
+                     CFStringRef name,
+                     const void *object,
+                     CFDictionaryRef userInfo) {
+    
+    [core setForcedOffline:YES];
+}
 
-void goOnline(CFNotificationCenterRef center,
-                    void *observer,
-                    CFStringRef name,
-                    const void *object,
-                    CFDictionaryRef userInfo) {
+void doDisableOfflineMode(CFNotificationCenterRef center,
+                         void *observer,
+                         CFStringRef name,
+                         const void *object,
+                         CFDictionaryRef userInfo) {
+    
     [core setForcedOffline:NO];
 }
 
-void goOffline(CFNotificationCenterRef center,
-              void *observer,
-              CFStringRef name,
-              const void *object,
-              CFDictionaryRef userInfo) {
-    [core setForcedOffline:YES];
-//    NSNumber *n = (NSNumber *)[[NSUserDefaults standardUserDefaults] objectForKey:@"enabled" inDomain:nsDomainString];
-//    HBLogDebug(@"%@", n); // always null
-}
 
-// Below should work, but doens't?
-//static NSString *nsNotificationString = @"se.nosskirneh.sos/preferences.changed";
-//
-//void offlineModeChanged(CFNotificationCenterRef center,
-//                        void *observer,
-//                        CFStringRef name,
-//                        const void *object,
-//                        CFDictionaryRef userInfo) {
-//    NSNumber *n = (NSNumber *)[[NSUserDefaults standardUserDefaults] objectForKey:@"enabled" inDomain:nsDomainString];
-//    BOOL enabled = (n)? [n boolValue]:YES;
-//    [core setForcedOffline:enabled];
-//}
-
-
-
+// Class that forces Offline Mode
 %hook SPCore
 
 - (id)init {
-    HBLogDebug(@"Found SPCore");
-    
+    // Init settings file
+    preferences = [[NSMutableDictionary alloc] initWithContentsOfFile:prefPath];
+    if (!preferences) preferences = [[NSMutableDictionary alloc] init];
+
     // Add observers
-    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, &goOffline, CFStringRef(onlineNotification), NULL, 0);
-    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, &goOnline, CFStringRef(offlineNotification), NULL, 0);
-    //CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, &offlineModeChanged, CFStringRef(nsNotificationString), NULL, 0);
-    
+    // Offline:
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, &doEnableOfflineMode, CFStringRef(doEnableOfflineModeNotification), NULL, 0);
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, &doDisableOfflineMode, CFStringRef(doDisableOfflineModeNotification), NULL, 0);
+
     // Save core
     return core = %orig;
 }
 
 - (void)setForcedOffline:(BOOL)arg {
-    // Save arg to [NSUserDefaults standardUserDefaults] here...
     if (!isCurrentViewOfflineView) {
         return %orig;
     }
+    // Else show alert saying why you cannot toggle in this menu
+    UIAlertController *alertController = [UIAlertController alertControllerWithTitle:@"Not allowed in this view"
+                                                                             message:@"Toggling the flipswitch while here crashes Spotify. I have therefore disabled this so you can continue enjoying the music uninterrupted!"
+                                                                      preferredStyle:UIAlertControllerStyleAlert];
+    [alertController addAction:[UIAlertAction actionWithTitle:@"Fine by me" style:UIAlertActionStyleCancel handler:^(UIAlertAction * _Nonnull action) {
+        [alertController dismissViewControllerAnimated:YES completion:nil];
+    }]];
+    [offlineViewController presentViewController:alertController animated:YES completion:nil];
     return;
 }
 
 %end
 
 
+// Has property isOffline and isOnline. Used setting start values.
+%hook SPSession
+
+- (id)initWithCore:(id)arg1 coreCreateOptions:(id)arg2 session:(id)arg3 clientVersionString:(id)arg4 acceptLanguages:(id)arg5 {
+    return session = %orig;
+}
+
+%end
+
+
+%hook SPBarViewController
+
+- (void)viewDidLoad {
+    %orig;
+
+    // Set default values for flipswitches
+    if (session.isOffline) {
+        [preferences setObject:[NSNumber numberWithBool:YES] forKey:offlineKey];
+
+    } else {
+        [preferences setObject:[NSNumber numberWithBool:YES] forKey:offlineKey];
+        
+    }
+    
+    // Save changes
+    if (![preferences writeToFile:prefPath atomically:YES]) {
+        HBLogError(@"Could not save preferences!");
+    }
+}
+
+%end
+
+
+
+// Prevents crash
 %hook SettingsViewController
 
 - (void)viewDidLayoutSubviews {
@@ -73,9 +106,26 @@ void goOffline(CFNotificationCenterRef center,
         // in that case, set isCurrentViewOFflineView to YES so that we
         // cannot toggle offline mode - Spotify will then crash!
         if ([className isEqualToString:@"OfflineSettingsSection"]) {
+            offlineViewController = self;
             isCurrentViewOfflineView = YES;
         }
     }
+}
+
+%end
+
+
+// Saves updated Offline Mode value (both through flipswitch and manually)
+%hook Adjust
+
+- (void)setOfflineMode:(BOOL)arg {
+    [preferences setObject:[NSNumber numberWithBool:arg] forKey:offlineKey];
+    
+    if (![preferences writeToFile:prefPath atomically:YES]) {
+        HBLogError(@"Could not save preferences!");
+    }
+
+    %orig;
 }
 
 %end
@@ -86,8 +136,8 @@ void goOffline(CFNotificationCenterRef center,
 
 - (void)viewWillLayoutSubviews {
     %orig;
+    offlineViewController = nil;
     isCurrentViewOfflineView = NO;
 }
 
 %end
-

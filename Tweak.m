@@ -1,90 +1,44 @@
 #import "include/Header.h"
 
-SPCore *core;
-SPSession *session;
-SettingsViewController *offlineViewController;
-BOOL isCurrentViewOfflineView;
+static SPTNetworkConnectivityController *connectivityController;
+static OfflineSettingsSection *offlineViewController;
 
-// What should happen on triggered flipswitch event?
-void doEnableOfflineMode(CFNotificationCenterRef center,
-                     void *observer,
-                     CFStringRef name,
-                     const void *object,
-                     CFDictionaryRef userInfo) {
-    
-    [core setForcedOffline:YES];
-}
+void doEnableOfflineMode(notifactionArguments) {
+    [connectivityController setForcedOffline:YES callback:nil];
 
-void doDisableOfflineMode(CFNotificationCenterRef center,
-                         void *observer,
-                         CFStringRef name,
-                         const void *object,
-                         CFDictionaryRef userInfo) {
-    
-    [core setForcedOffline:NO];
-}
-
-
-// Class that forces Offline Mode
-%hook SPCore
-
-- (id)init {
-    // Init settings file
-    preferences = [[NSMutableDictionary alloc] initWithContentsOfFile:prefPath];
-    if (!preferences) preferences = [[NSMutableDictionary alloc] init];
-
-    // Add observers
-    // Offline:
-    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, &doEnableOfflineMode, CFStringRef(doEnableOfflineModeNotification), NULL, 0);
-    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, &doDisableOfflineMode, CFStringRef(doDisableOfflineModeNotification), NULL, 0);
-
-    // Save core
-    return core = %orig;
-}
-
-- (void)setForcedOffline:(BOOL)arg {
-    if (!isCurrentViewOfflineView) {
-        return %orig;
+    // Update UISwitch on external change
+    if (offlineViewController) {
+        [offlineViewController.offlineModeCell.switchControl setOn:YES animated:YES];
     }
-    // Else show alert saying why you cannot toggle in this menu
-    UIAlertController *alertController = [UIAlertController alertControllerWithTitle:@"Not allowed in this view"
-                                                                             message:@"Toggling the flipswitch while here crashes Spotify. I have therefore disabled this so you can continue enjoying the music uninterrupted!"
-                                                                      preferredStyle:UIAlertControllerStyleAlert];
-    [alertController addAction:[UIAlertAction actionWithTitle:@"Fine by me" style:UIAlertActionStyleCancel handler:^(UIAlertAction * _Nonnull action) {
-        [alertController dismissViewControllerAnimated:YES completion:nil];
-    }]];
-    [offlineViewController presentViewController:alertController animated:YES completion:nil];
-    return;
+}
+
+void doDisableOfflineMode(notifactionArguments) {
+    [connectivityController setForcedOffline:NO callback:nil];
+
+    // Update UISwitch on external change
+    if (offlineViewController) {
+        [offlineViewController.offlineModeCell.switchControl setOn:NO animated:YES];
+    }
+}
+
+/* Classes to hook */
+
+%hook SPTNetworkConnectivityController
+
+- (id)initWithConnectivityManager:(id)arg1 core:(id)arg2 reachability:(id)arg3 networkInfo:(id)arg4 {
+    return connectivityController = %orig;
 }
 
 %end
 
 
-// Has property isOffline and isOnline. Used setting start values.
-%hook SPSession
+%hook Adjust
 
-- (id)initWithCore:(id)arg1 coreCreateOptions:(id)arg2 session:(id)arg3 clientVersionString:(id)arg4 acceptLanguages:(id)arg5 {
-    return session = %orig;
-}
-
-%end
-
-
-%hook SPBarViewController
-
-- (void)viewDidLoad {
+- (void)setOfflineMode:(BOOL)arg {
     %orig;
 
-    // Set default values for flipswitches
-    if (session.isOffline) {
-        [preferences setObject:[NSNumber numberWithBool:YES] forKey:offlineKey];
-
-    } else {
-        [preferences setObject:[NSNumber numberWithBool:YES] forKey:offlineKey];
-        
-    }
+    [preferences setObject:[NSNumber numberWithBool:arg] forKey:offlineKey];
     
-    // Save changes
     if (![preferences writeToFile:prefPath atomically:YES]) {
         HBLogError(@"Could not save preferences!");
     }
@@ -93,21 +47,29 @@ void doDisableOfflineMode(CFNotificationCenterRef center,
 %end
 
 
-
-// Prevents crash
 %hook SettingsViewController
 
-- (void)viewDidLayoutSubviews {
+// Used to get the offline section so that the UISwitch can be updated
+- (void)viewDidLoad {
     %orig;
+
     if (self.sections.count >= 1) {
-        NSString *className = NSStringFromClass([self.sections[1] class]);
-        
-        // Is current SettingsViewController the one with offline settings?
-        // in that case, set isCurrentViewOFflineView to YES so that we
-        // cannot toggle offline mode - Spotify will then crash!
+        NSString *className = NSStringFromClass([self.sections[0] class]);
+
         if ([className isEqualToString:@"OfflineSettingsSection"]) {
-            offlineViewController = self;
-            isCurrentViewOfflineView = YES;
+            offlineViewController = (OfflineSettingsSection *)self.sections[0];
+        }
+    }
+}
+
+- (void)viewDidDisappear:(BOOL)arg {
+    %orig;
+
+    if (self.sections.count >= 1) {
+        NSString *className = NSStringFromClass([self.sections[0] class]);
+
+        if ([className isEqualToString:@"OfflineSettingsSection"]) {
+            offlineViewController = nil;
         }
     }
 }
@@ -115,29 +77,12 @@ void doDisableOfflineMode(CFNotificationCenterRef center,
 %end
 
 
-// Saves updated Offline Mode value (both through flipswitch and manually)
-%hook Adjust
+%ctor {
+    // Init settings file
+    preferences = [[NSMutableDictionary alloc] initWithContentsOfFile:prefPath];
+    if (!preferences) preferences = [[NSMutableDictionary alloc] init];
 
-- (void)setOfflineMode:(BOOL)arg {
-    [preferences setObject:[NSNumber numberWithBool:arg] forKey:offlineKey];
-    
-    if (![preferences writeToFile:prefPath atomically:YES]) {
-        HBLogError(@"Could not save preferences!");
-    }
-
-    %orig;
+    // Add observers
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, &doEnableOfflineMode, CFStringRef(doEnableOfflineModeNotification), NULL, 0);
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, &doDisableOfflineMode, CFStringRef(doDisableOfflineModeNotification), NULL, 0);
 }
-
-%end
-
-
-// Reset state after going back from "Playback" setting view
-%hook SPNavigationController
-
-- (void)viewWillLayoutSubviews {
-    %orig;
-    offlineViewController = nil;
-    isCurrentViewOfflineView = NO;
-}
-
-%end

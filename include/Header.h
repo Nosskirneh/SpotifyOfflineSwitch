@@ -1,6 +1,8 @@
 #ifndef HEADER
 #define HEADER
 
+#define notifactionArguments CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo
+
 // Settings file
 NSMutableDictionary *preferences;
 NSString *const prefPath = @"/var/mobile/Library/Preferences/se.nosskirneh.sos.plist";
@@ -13,30 +15,27 @@ NSString *const doDisableOfflineModeNotification = @"se.nosskirneh.sos/doDisable
 NSString *const offlineKey = @"SpotifyOfflineMode";
 
 
-@interface SPCore : NSObject
-- (void)setForcedOffline:(BOOL)arg;
-@end
-
-
-@interface SPSession : NSObject
-@property (nonatomic, assign, readwrite) BOOL isOffline;
-@property (nonatomic, assign, readwrite) BOOL isOnline;
-@end
-
-@interface SPBarViewController : UIViewController
+@interface SPTNetworkConnectivityController : NSObject
+@property (nonatomic, readwrite, assign) BOOL forcedOffline;
+- (void)setForcedOffline:(BOOL)arg1 callback:(id)arg2;
 @end
 
 
 @interface SettingsSection : NSObject
 @end
 
+@interface SettingsSwtichTableViewCell : UITableViewCell
+@property (nonatomic, readwrite, assign) UISwitch *switchControl;
+@end
+
+@interface OfflineSettingsSection : SettingsSection
+@property (nonatomic, readwrite, assign) SettingsSwtichTableViewCell *offlineModeCell;
+@end
 
 @interface SettingsViewController : UIViewController
 @property (weak, nonatomic) NSArray<SettingsSection *> *sections;
+@property (nonatomic, readwrite, assign) UITableView *tableView;
 @end
 
-
-@interface SPNavigationController : UIViewController
-@end
 
 #endif

@@ -30,14 +30,12 @@
     switch (newState) {
         case FSSwitchStateIndeterminate:
             return;
-            
+
         case FSSwitchStateOn:
             CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), (CFStringRef)doEnableOfflineModeNotification, NULL, NULL, YES);
-            break;
-            
+
         case FSSwitchStateOff:
             CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), (CFStringRef)doDisableOfflineModeNotification, NULL, NULL, YES);
-            break;
     }
     
     return;
